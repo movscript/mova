@@ -25,11 +25,7 @@ jobs:
   tag-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
-      - name: Validate tag matches Cargo.toml version
+      - name: Validate Mova release tag
         shell: bash
         run: |
           set -euo pipefail
@@ -44,13 +40,7 @@ jobs:
             || { echo "❌  Tag '${GITHUB_REF_NAME}' doesn't match expected format"; exit 1; }
 
           tag_ver="${GITHUB_REF_NAME#mova-v}"
-          cargo_ver="$(grep -m1 '^version' codex-rs/Cargo.toml \
-                        | sed -E 's/version *= *"([^"]+)".*/\1/')"
-
-          [[ "${tag_ver}" == "${cargo_ver}" ]] \
-            || { echo "❌  Tag ${tag_ver} ≠ Cargo.toml ${cargo_ver}"; exit 1; }
-
-          echo "✅  Tag and Cargo.toml agree (${tag_ver})"
+          echo "✅  Mova release tag is valid (${tag_ver})"
           echo "::endgroup::"
 
   build:

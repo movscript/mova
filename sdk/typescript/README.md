@@ -1,13 +1,13 @@
-# Codex SDK
+# Mova SDK
 
-Embed the Codex agent in your workflows and apps.
+Embed the Mova agent in your workflows and apps.
 
-The TypeScript SDK wraps the `codex` CLI from `@openai/codex`. It spawns the CLI and exchanges JSONL events over stdin/stdout.
+The TypeScript SDK wraps the Mova CLI from `@movscript/mova`. It spawns the CLI and exchanges JSONL events over stdin/stdout.
 
 ## Installation
 
 ```bash
-npm install @openai/codex-sdk
+npm install @movscript/mova-sdk
 ```
 
 Requires Node.js 18+.
@@ -15,7 +15,7 @@ Requires Node.js 18+.
 ## Quickstart
 
 ```typescript
-import { Codex } from "@openai/codex-sdk";
+import { Codex } from "@movscript/mova-sdk";
 
 const codex = new Codex();
 const thread = codex.startThread();

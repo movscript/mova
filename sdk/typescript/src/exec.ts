@@ -42,15 +42,15 @@ export type CodexExecArgs = {
 
 const INTERNAL_ORIGINATOR_ENV = "CODEX_INTERNAL_ORIGINATOR_OVERRIDE";
 const TYPESCRIPT_SDK_ORIGINATOR = "codex_sdk_ts";
-const CODEX_NPM_NAME = "@openai/codex";
+const CODEX_NPM_NAME = "@movscript/mova";
 
 const PLATFORM_PACKAGE_BY_TARGET: Record<string, string> = {
-  "x86_64-unknown-linux-musl": "@openai/codex-linux-x64",
-  "aarch64-unknown-linux-musl": "@openai/codex-linux-arm64",
-  "x86_64-apple-darwin": "@openai/codex-darwin-x64",
-  "aarch64-apple-darwin": "@openai/codex-darwin-arm64",
-  "x86_64-pc-windows-msvc": "@openai/codex-win32-x64",
-  "aarch64-pc-windows-msvc": "@openai/codex-win32-arm64",
+  "x86_64-unknown-linux-musl": "@movscript/mova-linux-x64",
+  "aarch64-unknown-linux-musl": "@movscript/mova-linux-arm64",
+  "x86_64-apple-darwin": "@movscript/mova-darwin-x64",
+  "aarch64-apple-darwin": "@movscript/mova-darwin-arm64",
+  "x86_64-pc-windows-msvc": "@movscript/mova-win32-x64",
+  "aarch64-pc-windows-msvc": "@movscript/mova-win32-arm64",
 };
 
 const moduleRequire = createRequire(import.meta.url);
@@ -394,15 +394,15 @@ function findCodexPath(): CodexPathResolution {
     vendorRoot = path.join(path.dirname(platformPackageJsonPath), "vendor");
   } catch {
     throw new Error(
-      `Unable to locate Codex CLI binaries. Ensure ${CODEX_NPM_NAME} is installed with optional dependencies.`,
+      `Unable to locate Mova CLI binaries. Ensure ${CODEX_NPM_NAME} is installed with optional dependencies.`,
     );
   }
 
-  const codexBinaryName = process.platform === "win32" ? "codex.exe" : "codex";
-  const nativePackage = resolveNativePackage(vendorRoot, targetTriple, codexBinaryName);
+  const binaryNames = process.platform === "win32" ? ["mova.exe", "codex.exe"] : ["mova", "codex"];
+  const nativePackage = resolveNativePackage(vendorRoot, targetTriple, binaryNames);
   if (!nativePackage) {
     throw new Error(
-      `Unable to locate Codex CLI binaries for ${targetTriple}. Ensure ${CODEX_NPM_NAME} is installed with optional dependencies.`,
+      `Unable to locate Mova CLI binaries for ${targetTriple}. Ensure ${CODEX_NPM_NAME} is installed with optional dependencies.`,
     );
   }
 
@@ -412,23 +412,28 @@ function findCodexPath(): CodexPathResolution {
 export function resolveNativePackage(
   vendorRoot: string,
   targetTriple: string,
-  codexBinaryName: string,
+  codexBinaryName: string | string[],
 ): CodexPathResolution | null {
   const packageRoot = path.join(vendorRoot, targetTriple);
-  const packageBinaryPath = path.join(packageRoot, "bin", codexBinaryName);
-  if (isFile(packageBinaryPath) && isFile(path.join(packageRoot, "codex-package.json"))) {
-    return {
-      executablePath: packageBinaryPath,
-      pathDirs: existingDirs(path.join(packageRoot, "codex-path")),
-    };
+  const codexBinaryNames = Array.isArray(codexBinaryName) ? codexBinaryName : [codexBinaryName];
+  for (const binaryName of codexBinaryNames) {
+    const packageBinaryPath = path.join(packageRoot, "bin", binaryName);
+    if (isFile(packageBinaryPath) && isFile(path.join(packageRoot, "codex-package.json"))) {
+      return {
+        executablePath: packageBinaryPath,
+        pathDirs: existingDirs(path.join(packageRoot, "codex-path")),
+      };
+    }
   }
 
-  const legacyBinaryPath = path.join(packageRoot, "codex", codexBinaryName);
-  if (isFile(legacyBinaryPath)) {
-    return {
-      executablePath: legacyBinaryPath,
-      pathDirs: existingDirs(path.join(packageRoot, "path")),
-    };
+  for (const binaryName of codexBinaryNames) {
+    const legacyBinaryPath = path.join(packageRoot, "codex", binaryName);
+    if (isFile(legacyBinaryPath)) {
+      return {
+        executablePath: legacyBinaryPath,
+        pathDirs: existingDirs(path.join(packageRoot, "path")),
+      };
+    }
   }
 
   return null;

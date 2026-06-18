@@ -87,7 +87,7 @@ fi
 
 case "$bundle" in
   primary)
-    variant="codex"
+    variant="mova"
     entrypoint="codex"
     archive_stem="codex-package"
     ;;

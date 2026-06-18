@@ -163,6 +163,23 @@ describe("CodexExec", () => {
     });
   });
 
+  it("prefers the Mova binary when both package-layout binaries exist", async () => {
+    const { resolveNativePackage } = await import("../src/exec");
+    const vendorRoot = mkdtempSync(path.join(tmpdir(), "codex-sdk-vendor-"));
+    const packageRoot = path.join(vendorRoot, "x86_64-unknown-linux-musl");
+    const binDir = path.join(packageRoot, "bin");
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(path.join(packageRoot, "codex-package.json"), "{}");
+    writeFileSync(path.join(binDir, "codex"), "");
+    writeFileSync(path.join(binDir, "mova"), "");
+
+    expect(resolveNativePackage(vendorRoot, "x86_64-unknown-linux-musl", ["mova", "codex"]))
+      .toEqual({
+        executablePath: path.join(binDir, "mova"),
+        pathDirs: [],
+      });
+  });
+
   it("falls back to the legacy binary layout", async () => {
     const { resolveNativePackage } = await import("../src/exec");
     const vendorRoot = mkdtempSync(path.join(tmpdir(), "codex-sdk-vendor-"));

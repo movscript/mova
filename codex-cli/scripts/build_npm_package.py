@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage and optionally package the @openai/codex npm module."""
+"""Stage and optionally package the @movscript/mova npm module."""
 
 import argparse
 import json
@@ -15,49 +15,49 @@ CODEX_CLI_ROOT = SCRIPT_DIR.parent
 REPO_ROOT = CODEX_CLI_ROOT.parent
 RESPONSES_API_PROXY_NPM_ROOT = REPO_ROOT / "codex-rs" / "responses-api-proxy" / "npm"
 CODEX_SDK_ROOT = REPO_ROOT / "sdk" / "typescript"
-CODEX_NPM_NAME = "@openai/codex"
+CODEX_NPM_NAME = "@movscript/mova"
 CODEX_PACKAGE_COMPONENT = "codex-package"
 
-# `npm_name` is the local optional-dependency alias consumed by `bin/codex.js`.
-# The underlying package published to npm is always `@openai/codex`.
+# `npm_name` is the local optional-dependency alias consumed by `bin/mova.js`.
+# The underlying package published to npm is always `@movscript/mova`.
 CODEX_PLATFORM_PACKAGES: dict[str, dict[str, str]] = {
-    "codex-linux-x64": {
-        "npm_name": "@openai/codex-linux-x64",
+    "mova-linux-x64": {
+        "npm_name": "@movscript/mova-linux-x64",
         "npm_tag": "linux-x64",
         "target_triple": "x86_64-unknown-linux-musl",
         "os": "linux",
         "cpu": "x64",
     },
-    "codex-linux-arm64": {
-        "npm_name": "@openai/codex-linux-arm64",
+    "mova-linux-arm64": {
+        "npm_name": "@movscript/mova-linux-arm64",
         "npm_tag": "linux-arm64",
         "target_triple": "aarch64-unknown-linux-musl",
         "os": "linux",
         "cpu": "arm64",
     },
-    "codex-darwin-x64": {
-        "npm_name": "@openai/codex-darwin-x64",
+    "mova-darwin-x64": {
+        "npm_name": "@movscript/mova-darwin-x64",
         "npm_tag": "darwin-x64",
         "target_triple": "x86_64-apple-darwin",
         "os": "darwin",
         "cpu": "x64",
     },
-    "codex-darwin-arm64": {
-        "npm_name": "@openai/codex-darwin-arm64",
+    "mova-darwin-arm64": {
+        "npm_name": "@movscript/mova-darwin-arm64",
         "npm_tag": "darwin-arm64",
         "target_triple": "aarch64-apple-darwin",
         "os": "darwin",
         "cpu": "arm64",
     },
-    "codex-win32-x64": {
-        "npm_name": "@openai/codex-win32-x64",
+    "mova-win32-x64": {
+        "npm_name": "@movscript/mova-win32-x64",
         "npm_tag": "win32-x64",
         "target_triple": "x86_64-pc-windows-msvc",
         "os": "win32",
         "cpu": "x64",
     },
-    "codex-win32-arm64": {
-        "npm_name": "@openai/codex-win32-arm64",
+    "mova-win32-arm64": {
+        "npm_name": "@movscript/mova-win32-arm64",
         "npm_tag": "win32-arm64",
         "target_triple": "aarch64-pc-windows-msvc",
         "os": "win32",
@@ -66,19 +66,19 @@ CODEX_PLATFORM_PACKAGES: dict[str, dict[str, str]] = {
 }
 
 PACKAGE_EXPANSIONS: dict[str, list[str]] = {
-    "codex": ["codex", *CODEX_PLATFORM_PACKAGES],
+    "mova": ["mova", *CODEX_PLATFORM_PACKAGES],
 }
 
 PACKAGE_NATIVE_COMPONENTS: dict[str, list[str]] = {
-    "codex": [],
-    "codex-linux-x64": [CODEX_PACKAGE_COMPONENT],
-    "codex-linux-arm64": [CODEX_PACKAGE_COMPONENT],
-    "codex-darwin-x64": [CODEX_PACKAGE_COMPONENT],
-    "codex-darwin-arm64": [CODEX_PACKAGE_COMPONENT],
-    "codex-win32-x64": [CODEX_PACKAGE_COMPONENT],
-    "codex-win32-arm64": [CODEX_PACKAGE_COMPONENT],
+    "mova": [],
+    "mova-linux-x64": [CODEX_PACKAGE_COMPONENT],
+    "mova-linux-arm64": [CODEX_PACKAGE_COMPONENT],
+    "mova-darwin-x64": [CODEX_PACKAGE_COMPONENT],
+    "mova-darwin-arm64": [CODEX_PACKAGE_COMPONENT],
+    "mova-win32-x64": [CODEX_PACKAGE_COMPONENT],
+    "mova-win32-arm64": [CODEX_PACKAGE_COMPONENT],
     "codex-responses-api-proxy": ["codex-responses-api-proxy"],
-    "codex-sdk": [],
+    "mova-sdk": [],
 }
 
 PACKAGE_TARGET_FILTERS: dict[str, str] = {
@@ -87,14 +87,15 @@ PACKAGE_TARGET_FILTERS: dict[str, str] = {
 }
 
 PACKAGE_CHOICES = tuple(PACKAGE_NATIVE_COMPONENTS)
+PLATFORM_PACKAGE_CHOICES = tuple(CODEX_PLATFORM_PACKAGES)
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build or stage the Codex CLI npm package.")
+    parser = argparse.ArgumentParser(description="Build or stage the Mova CLI npm package.")
     parser.add_argument(
         "--package",
         choices=PACKAGE_CHOICES,
-        default="codex",
-        help="Which npm package to stage (default: codex).",
+        default="mova",
+        help="Which npm package to stage (default: mova).",
     )
     parser.add_argument(
         "--version",
@@ -130,6 +131,16 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Directory containing pre-installed native binaries to bundle (vendor root).",
     )
+    parser.add_argument(
+        "--platform-package",
+        dest="platform_packages",
+        action="append",
+        choices=PLATFORM_PACKAGE_CHOICES,
+        help=(
+            "When staging the root mova package, include this platform optional "
+            "dependency. May be repeated. Defaults to all platforms."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -147,10 +158,14 @@ def main() -> int:
     if not version:
         raise RuntimeError("Must specify --version or --release-version.")
 
+    platform_packages = tuple(args.platform_packages or ())
+    if platform_packages and package != "mova":
+        raise RuntimeError("--platform-package only applies to --package mova.")
+
     staging_dir, created_temp = prepare_staging_dir(args.staging_dir)
 
     try:
-        stage_sources(staging_dir, version, package)
+        stage_sources(staging_dir, version, package, platform_packages)
 
         vendor_src = args.vendor_src.resolve() if args.vendor_src else None
         native_components = PACKAGE_NATIVE_COMPONENTS.get(package, [])
@@ -174,12 +189,12 @@ def main() -> int:
 
         if release_version:
             staging_dir_str = str(staging_dir)
-            if package == "codex":
+            if package == "mova":
                 print(
                     f"Staged version {version} for release in {staging_dir_str}\n\n"
                     "Verify the CLI:\n"
-                    f"    node {staging_dir_str}/bin/codex.js --version\n"
-                    f"    node {staging_dir_str}/bin/codex.js --help\n\n"
+                    f"    node {staging_dir_str}/bin/mova.js --version\n"
+                    f"    node {staging_dir_str}/bin/mova.js --help\n\n"
                 )
             elif package == "codex-responses-api-proxy":
                 print(
@@ -222,18 +237,23 @@ def prepare_staging_dir(staging_dir: Path | None) -> tuple[Path, bool]:
             raise RuntimeError(f"Staging directory {staging_dir} is not empty.")
         return staging_dir, False
 
-    temp_dir = Path(tempfile.mkdtemp(prefix="codex-npm-stage-"))
+    temp_dir = Path(tempfile.mkdtemp(prefix="mova-npm-stage-"))
     return temp_dir, True
 
 
-def stage_sources(staging_dir: Path, version: str, package: str) -> None:
+def stage_sources(
+    staging_dir: Path,
+    version: str,
+    package: str,
+    platform_packages: tuple[str, ...] = (),
+) -> None:
     package_json: dict
     package_json_path: Path | None = None
 
-    if package == "codex":
+    if package == "mova":
         bin_dir = staging_dir / "bin"
         bin_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(CODEX_CLI_ROOT / "bin" / "codex.js", bin_dir / "codex.js")
+        shutil.copy2(CODEX_CLI_ROOT / "bin" / "mova.js", bin_dir / "mova.js")
 
         readme_src = REPO_ROOT / "README.md"
         if readme_src.exists():
@@ -280,7 +300,7 @@ def stage_sources(staging_dir: Path, version: str, package: str) -> None:
             shutil.copy2(readme_src, staging_dir / "README.md")
 
         package_json_path = RESPONSES_API_PROXY_NPM_ROOT / "package.json"
-    elif package == "codex-sdk":
+    elif package == "mova-sdk":
         package_json_path = CODEX_SDK_ROOT / "package.json"
         stage_codex_sdk_sources(staging_dir)
     else:
@@ -291,18 +311,22 @@ def stage_sources(staging_dir: Path, version: str, package: str) -> None:
             package_json = json.load(fh)
         package_json["version"] = version
 
-    if package == "codex":
-        package_json["files"] = ["bin/codex.js"]
+    if package == "mova":
+        package_json["files"] = ["bin/mova.js"]
+        root_platform_packages = platform_packages or tuple(
+            package
+            for package in PACKAGE_EXPANSIONS["mova"]
+            if package != "mova"
+        )
         package_json["optionalDependencies"] = {
             CODEX_PLATFORM_PACKAGES[platform_package]["npm_name"]: (
                 f"npm:{CODEX_NPM_NAME}@"
                 f"{compute_platform_package_version(version, CODEX_PLATFORM_PACKAGES[platform_package]['npm_tag'])}"
             )
-            for platform_package in PACKAGE_EXPANSIONS["codex"]
-            if platform_package != "codex"
+            for platform_package in root_platform_packages
         }
 
-    elif package == "codex-sdk":
+    elif package == "mova-sdk":
         scripts = package_json.get("scripts")
         if isinstance(scripts, dict):
             scripts.pop("prepare", None)
@@ -337,7 +361,7 @@ def stage_codex_sdk_sources(staging_dir: Path) -> None:
 
     dist_src = package_root / "dist"
     if not dist_src.exists():
-        raise RuntimeError("codex-sdk build did not produce a dist directory.")
+        raise RuntimeError("mova-sdk build did not produce a dist directory.")
 
     shutil.copytree(dist_src, staging_dir / "dist")
 
@@ -411,7 +435,7 @@ def run_npm_pack(staging_dir: Path, output_path: Path) -> Path:
     output_path = output_path.resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with tempfile.TemporaryDirectory(prefix="codex-npm-pack-") as pack_dir_str:
+    with tempfile.TemporaryDirectory(prefix="mova-npm-pack-") as pack_dir_str:
         pack_dir = Path(pack_dir_str)
         npm_cache_dir = pack_dir / "npm-cache"
         npm_logs_dir = pack_dir / "npm-logs"

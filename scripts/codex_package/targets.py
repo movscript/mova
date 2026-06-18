@@ -47,6 +47,11 @@ class PackageInputs:
 
 
 PACKAGE_VARIANTS: dict[str, PackageVariant] = {
+    "mova": PackageVariant(
+        name="mova",
+        cargo_bin="codex",
+        executable_stem="mova",
+    ),
     "codex": PackageVariant(
         name="codex",
         cargo_bin="codex",

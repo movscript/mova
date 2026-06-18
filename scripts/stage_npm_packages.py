@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage one or more Codex npm packages for release."""
+"""Stage one or more Mova npm packages for release."""
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -19,7 +19,7 @@ from typing import Sequence
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BUILD_SCRIPT = REPO_ROOT / "codex-cli" / "scripts" / "build_npm_package.py"
 WORKFLOW_NAME = ".github/workflows/rust-release.yml"
-GITHUB_REPO = "openai/codex"
+GITHUB_REPO = "movscript/mova"
 BINARY_TARGETS = (
     "x86_64-unknown-linux-musl",
     "aarch64-unknown-linux-musl",
@@ -40,6 +40,10 @@ CODEX_PLATFORM_PACKAGES = getattr(_BUILD_MODULE, "CODEX_PLATFORM_PACKAGES", {})
 CODEX_PACKAGE_COMPONENT = getattr(
     _BUILD_MODULE, "CODEX_PACKAGE_COMPONENT", "codex-package"
 )
+PLATFORM_PACKAGE_BY_TARGET = {
+    package_config["target_triple"]: package_name
+    for package_name, package_config in CODEX_PLATFORM_PACKAGES.items()
+}
 
 
 @dataclass(frozen=True)
@@ -102,6 +106,16 @@ def parse_args() -> argparse.Namespace:
         help="Optional workflow URL to reuse for native artifacts.",
     )
     parser.add_argument(
+        "--target",
+        dest="targets",
+        action="append",
+        choices=BINARY_TARGETS,
+        help=(
+            "Native target to stage and publish. May be provided multiple times. "
+            "Defaults to every release target."
+        ),
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=None,
@@ -131,10 +145,32 @@ def collect_native_component_sets(packages: list[str]) -> list[tuple[str, ...]]:
     return component_sets
 
 
-def expand_packages(packages: list[str]) -> list[str]:
+def selected_targets(targets: list[str] | None) -> tuple[str, ...]:
+    if not targets:
+        return BINARY_TARGETS
+
+    requested = set(targets)
+    return tuple(target for target in BINARY_TARGETS if target in requested)
+
+
+def platform_packages_for_targets(targets: Sequence[str]) -> list[str]:
+    return [
+        PLATFORM_PACKAGE_BY_TARGET[target]
+        for target in targets
+        if target in PLATFORM_PACKAGE_BY_TARGET
+    ]
+
+
+def expand_packages(packages: list[str], targets: Sequence[str]) -> list[str]:
     expanded: list[str] = []
+    selected_platform_packages = set(platform_packages_for_targets(targets))
     for package in packages:
         for expanded_package in PACKAGE_EXPANSIONS.get(package, [package]):
+            if (
+                expanded_package in CODEX_PLATFORM_PACKAGES
+                and expanded_package not in selected_platform_packages
+            ):
+                continue
             if expanded_package in expanded:
                 continue
             expanded.append(expanded_package)
@@ -180,6 +216,7 @@ def install_native_components(
     components: set[str],
     vendor_root: Path,
     artifacts_dir: Path,
+    targets: Sequence[str],
 ) -> None:
     if not components:
         return
@@ -196,6 +233,7 @@ def install_native_components(
             artifacts_dir,
             sorted(components),
             vendor_dir,
+            targets,
         )
     print(f"Installed native dependencies into {vendor_dir}", flush=True)
 
@@ -205,21 +243,24 @@ def install_from_workflow_artifacts(
     artifacts_dir: Path,
     components: Sequence[str],
     vendor_dir: Path,
+    targets: Sequence[str],
 ) -> None:
-    artifacts = select_target_artifacts(workflow_id, components)
+    artifacts = select_target_artifacts(workflow_id, components, targets)
     download_artifacts(workflow_id, artifacts_dir, artifacts)
     if CODEX_PACKAGE_COMPONENT in components:
-        install_codex_package_archives(artifacts_dir, vendor_dir, BINARY_TARGETS)
+        install_codex_package_archives(artifacts_dir, vendor_dir, targets)
     install_binary_components(
         artifacts_dir,
         vendor_dir,
         [BINARY_COMPONENTS[name] for name in components if name in BINARY_COMPONENTS],
+        targets,
     )
 
 
 def select_target_artifacts(
     workflow_id: str,
     components: Sequence[str],
+    targets: Sequence[str],
 ) -> list[WorkflowArtifact]:
     needs_target_artifacts = CODEX_PACKAGE_COMPONENT in components or any(
         component in BINARY_COMPONENTS for component in components
@@ -231,7 +272,7 @@ def select_target_artifacts(
         artifact.name: artifact for artifact in list_workflow_artifacts(workflow_id)
     }
     selected_artifacts: list[WorkflowArtifact] = []
-    for target in BINARY_TARGETS:
+    for target in targets:
         for artifact_name in [target, f"{target}-unsigned"]:
             artifact = artifacts_by_name.get(artifact_name)
             if artifact is not None:
@@ -357,9 +398,10 @@ def install_binary_components(
     artifacts_dir: Path,
     vendor_dir: Path,
     selected_components: Sequence[BinaryComponent],
+    targets: Sequence[str],
 ) -> None:
     for component in selected_components:
-        component_targets = list(BINARY_TARGETS)
+        component_targets = list(targets)
 
         print(
             f"Installing {component.binary_basename} binaries for targets: "
@@ -468,8 +510,8 @@ def run_command(cmd: list[str]) -> None:
 
 def tarball_name_for_package(package: str, version: str) -> str:
     if package in CODEX_PLATFORM_PACKAGES:
-        platform = package.removeprefix("codex-")
-        return f"codex-npm-{platform}-{version}.tgz"
+        platform = package.removeprefix("mova-")
+        return f"mova-npm-{platform}-{version}.tgz"
     return f"{package}-npm-{version}.tgz"
 
 
@@ -481,8 +523,10 @@ def main() -> int:
 
     runner_temp = Path(os.environ.get("RUNNER_TEMP", tempfile.gettempdir()))
 
-    packages = expand_packages(list(args.packages))
+    targets = selected_targets(args.targets)
+    packages = expand_packages(list(args.packages), targets)
     native_component_sets = collect_native_component_sets(packages)
+    print("Selected targets: " + ", ".join(targets), flush=True)
     print("Expanded packages: " + ", ".join(packages), flush=True)
     if native_component_sets:
         component_sets = [
@@ -526,6 +570,7 @@ def main() -> int:
                     set(components),
                     vendor_temp_root,
                     artifacts_temp_root,
+                    targets,
                 )
                 vendor_src_by_components[components] = vendor_temp_root / "vendor"
 
@@ -558,6 +603,10 @@ def main() -> int:
             )
             if vendor_src is not None:
                 cmd.extend(["--vendor-src", str(vendor_src)])
+
+            if package == "mova":
+                for platform_package in platform_packages_for_targets(targets):
+                    cmd.extend(["--platform-package", platform_package])
 
             try:
                 run_command(cmd)

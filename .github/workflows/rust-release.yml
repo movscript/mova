@@ -52,6 +52,9 @@ concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: true
 
+env:
+  NPM_RELEASE_TARGETS: aarch64-apple-darwin
+
 jobs:
   tag-check:
     runs-on: ubuntu-latest
@@ -1664,12 +1667,16 @@ jobs:
           RELEASE_VERSION: ${{ steps.release_name.outputs.name }}
         run: |
           workflow_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          ./scripts/stage_npm_packages.py \
-            --release-version "$RELEASE_VERSION" \
-            --workflow-url "$workflow_url" \
-            --package codex \
-            --package codex-responses-api-proxy \
-            --package codex-sdk
+          stage_args=(
+            --release-version "$RELEASE_VERSION"
+            --workflow-url "$workflow_url"
+            --package mova
+            --package mova-sdk
+          )
+          for target in ${NPM_RELEASE_TARGETS}; do
+            stage_args+=(--target "$target")
+          done
+          ./scripts/stage_npm_packages.py "${stage_args[@]}"
 
       - name: Stage installer scripts
         if: ${{ env.SIGN_MACOS == 'true' }}
@@ -1768,7 +1775,7 @@ jobs:
           # Node 24 bundles npm >= 11.5.1, which trusted publishing requires.
           node-version: 24
           registry-url: "https://registry.npmjs.org"
-          scope: "@openai"
+          scope: "@movscript"
 
       - name: Download npm tarballs from release
         env:
@@ -1781,13 +1788,24 @@ jobs:
           tag="$RELEASE_TAG"
           mkdir -p dist/npm
           patterns=(
-            "codex-npm-${version}.tgz"
-            "codex-npm-linux-*-${version}.tgz"
-            "codex-npm-darwin-*-${version}.tgz"
-            "codex-npm-win32-*-${version}.tgz"
-            "codex-responses-api-proxy-npm-${version}.tgz"
-            "codex-sdk-npm-${version}.tgz"
+            "mova-npm-${version}.tgz"
+            "mova-sdk-npm-${version}.tgz"
           )
+          for target in ${NPM_RELEASE_TARGETS}; do
+            case "$target" in
+              x86_64-unknown-linux-musl) platform="linux-x64" ;;
+              aarch64-unknown-linux-musl) platform="linux-arm64" ;;
+              x86_64-apple-darwin) platform="darwin-x64" ;;
+              aarch64-apple-darwin) platform="darwin-arm64" ;;
+              x86_64-pc-windows-msvc) platform="win32-x64" ;;
+              aarch64-pc-windows-msvc) platform="win32-arm64" ;;
+              *)
+                echo "Unexpected npm release target: $target"
+                exit 1
+                ;;
+            esac
+            patterns+=("mova-npm-${platform}-${version}.tgz")
+          done
           for pattern in "${patterns[@]}"; do
             gh release download "$tag" \
               --repo "${GITHUB_REPOSITORY}" \
@@ -1807,20 +1825,28 @@ jobs:
             prefix="${NPM_TAG}-"
           fi
 
-          root_tarball="dist/npm/codex-npm-${VERSION}.tgz"
-          sdk_tarball="dist/npm/codex-sdk-npm-${VERSION}.tgz"
+          root_tarball="dist/npm/mova-npm-${VERSION}.tgz"
+          sdk_tarball="dist/npm/mova-sdk-npm-${VERSION}.tgz"
           # Keep this list in sync with CODEX_PLATFORM_PACKAGES in
           # codex-cli/scripts/build_npm_package.py. The root wrapper advances
-          # @openai/codex@latest as soon as it publishes, so every platform
+          # @movscript/mova@latest as soon as it publishes, so every platform
           # package it aliases must already exist in the registry first.
-          platform_tarballs=(
-            "dist/npm/codex-npm-linux-x64-${VERSION}.tgz"
-            "dist/npm/codex-npm-linux-arm64-${VERSION}.tgz"
-            "dist/npm/codex-npm-darwin-x64-${VERSION}.tgz"
-            "dist/npm/codex-npm-darwin-arm64-${VERSION}.tgz"
-            "dist/npm/codex-npm-win32-x64-${VERSION}.tgz"
-            "dist/npm/codex-npm-win32-arm64-${VERSION}.tgz"
-          )
+          platform_tarballs=()
+          for target in ${NPM_RELEASE_TARGETS}; do
+            case "$target" in
+              x86_64-unknown-linux-musl) platform="linux-x64" ;;
+              aarch64-unknown-linux-musl) platform="linux-arm64" ;;
+              x86_64-apple-darwin) platform="darwin-x64" ;;
+              aarch64-apple-darwin) platform="darwin-arm64" ;;
+              x86_64-pc-windows-msvc) platform="win32-x64" ;;
+              aarch64-pc-windows-msvc) platform="win32-arm64" ;;
+              *)
+                echo "Unexpected npm release target: $target"
+                exit 1
+                ;;
+            esac
+            platform_tarballs+=("dist/npm/mova-npm-${platform}-${VERSION}.tgz")
+          done
 
           for required_tarball in "${platform_tarballs[@]}" "${root_tarball}"; do
             if [[ ! -f "${required_tarball}" ]]; then
@@ -1851,7 +1877,7 @@ jobs:
           done
 
           # Publish the platform packages before the root CLI wrapper. The root
-          # wrapper advances @openai/codex@latest, so it should only publish
+          # wrapper advances @movscript/mova@latest, so it should only publish
           # after the optional dependency versions it references exist.
           tarballs=(
             "${platform_tarballs[@]}"
@@ -1867,12 +1893,12 @@ jobs:
             tag=""
 
             case "${filename}" in
-              codex-npm-linux-*-"${VERSION}".tgz|codex-npm-darwin-*-"${VERSION}".tgz|codex-npm-win32-*-"${VERSION}".tgz)
-                platform="${filename#codex-npm-}"
+              mova-npm-linux-*-"${VERSION}".tgz|mova-npm-darwin-*-"${VERSION}".tgz|mova-npm-win32-*-"${VERSION}".tgz)
+                platform="${filename#mova-npm-}"
                 platform="${platform%-${VERSION}.tgz}"
                 tag="${prefix}${platform}"
                 ;;
-              codex-npm-"${VERSION}".tgz|codex-responses-api-proxy-npm-"${VERSION}".tgz|codex-sdk-npm-"${VERSION}".tgz)
+              mova-npm-"${VERSION}".tgz|mova-sdk-npm-"${VERSION}".tgz)
                 tag="${NPM_TAG}"
                 ;;
               *)
@@ -1882,6 +1908,7 @@ jobs:
             esac
 
             publish_cmd=(npm publish "${GITHUB_WORKSPACE}/${tarball}")
+            publish_cmd+=(--access public)
             if [[ -n "${tag}" ]]; then
               publish_cmd+=(--tag "${tag}")
             fi

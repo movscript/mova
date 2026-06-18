@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Unified entry point for the Codex CLI.
+// Unified entry point for the Mova CLI.
 
 import { spawn } from "node:child_process";
 import { existsSync, realpathSync } from "fs";
@@ -13,12 +13,12 @@ const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 
 const PLATFORM_PACKAGE_BY_TARGET = {
-  "x86_64-unknown-linux-musl": "@openai/codex-linux-x64",
-  "aarch64-unknown-linux-musl": "@openai/codex-linux-arm64",
-  "x86_64-apple-darwin": "@openai/codex-darwin-x64",
-  "aarch64-apple-darwin": "@openai/codex-darwin-arm64",
-  "x86_64-pc-windows-msvc": "@openai/codex-win32-x64",
-  "aarch64-pc-windows-msvc": "@openai/codex-win32-arm64",
+  "x86_64-unknown-linux-musl": "@movscript/mova-linux-x64",
+  "aarch64-unknown-linux-musl": "@movscript/mova-linux-arm64",
+  "x86_64-apple-darwin": "@movscript/mova-darwin-x64",
+  "aarch64-apple-darwin": "@movscript/mova-darwin-arm64",
+  "x86_64-pc-windows-msvc": "@movscript/mova-win32-x64",
+  "aarch64-pc-windows-msvc": "@movscript/mova-win32-arm64",
 };
 
 const { platform, arch } = process;
@@ -84,23 +84,22 @@ function findCodexExecutable() {
     vendorRoot = path.join(__dirname, "..", "vendor");
   }
 
-  const codexExecutable = path.join(
-    vendorRoot,
-    targetTriple,
-    "bin",
-    process.platform === "win32" ? "codex.exe" : "codex",
-  );
-  if (existsSync(codexExecutable)) {
-    return codexExecutable;
+  const executableNames =
+    process.platform === "win32" ? ["mova.exe", "codex.exe"] : ["mova", "codex"];
+  for (const executableName of executableNames) {
+    const executable = path.join(vendorRoot, targetTriple, "bin", executableName);
+    if (existsSync(executable)) {
+      return executable;
+    }
   }
 
   const packageManager = detectPackageManager();
   const updateCommand =
     packageManager === "bun"
-      ? "bun install -g @openai/codex@latest"
-      : "npm install -g @openai/codex@latest";
+      ? "bun install -g @movscript/mova@latest"
+      : "npm install -g @movscript/mova@latest";
   throw new Error(
-    `Missing optional dependency ${platformPackage}. Reinstall Codex: ${updateCommand}`,
+    `Missing optional dependency ${platformPackage}. Reinstall Mova: ${updateCommand}`,
   );
 }
 

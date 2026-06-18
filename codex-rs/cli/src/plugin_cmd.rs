@@ -2,10 +2,12 @@ use anyhow::Context;
 use anyhow::Result;
 use anyhow::bail;
 use clap::Parser;
+use codex_app_server_protocol::AuthMode;
 use codex_core::config::Config;
 use codex_core::config::find_codex_home;
 use codex_core_plugins::ConfiguredMarketplace;
 use codex_core_plugins::OPENAI_BUNDLED_MARKETPLACE_NAME;
+use codex_core_plugins::PluginInstallOutcome;
 use codex_core_plugins::PluginInstallRequest;
 use codex_core_plugins::PluginsConfigInput;
 use codex_core_plugins::PluginsManager;
@@ -16,6 +18,8 @@ use codex_core_plugins::marketplace::MarketplacePluginAuthPolicy;
 use codex_core_plugins::marketplace::MarketplacePluginInstallPolicy;
 use codex_core_plugins::marketplace::MarketplacePluginSource;
 use codex_core_plugins::marketplace::find_marketplace_manifest_path;
+use codex_login::CodexAuth;
+use codex_login::auth::read_codex_api_key_from_env;
 use codex_plugin::PluginId;
 use codex_plugin::validate_plugin_segment;
 use codex_utils_cli::CliConfigOverrides;
@@ -73,6 +77,10 @@ pub struct AddPluginArgs {
     /// Configured marketplace name to use when PLUGIN does not include @MARKETPLACE.
     #[arg(long = "marketplace", short = 'm', value_name = "MARKETPLACE")]
     marketplace_name: Option<String>,
+
+    /// Output install result as JSON.
+    #[arg(long = "json")]
+    json: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -107,6 +115,10 @@ pub struct RemovePluginArgs {
     /// Marketplace name to use when PLUGIN does not include @MARKETPLACE.
     #[arg(long = "marketplace", short = 'm', value_name = "MARKETPLACE")]
     marketplace_name: Option<String>,
+
+    /// Output remove result as JSON.
+    #[arg(long = "json")]
+    json: bool,
 }
 
 pub async fn run_plugin_add(
@@ -118,11 +130,16 @@ pub async fn run_plugin_add(
         plugins_input,
         manager,
     } = load_plugin_command_context(overrides).await?;
+    let AddPluginArgs {
+        plugin,
+        marketplace_name,
+        json,
+    } = args;
     let PluginSelection {
         plugin_name,
         marketplace_name,
         ..
-    } = parse_plugin_selection(args.plugin, args.marketplace_name)?;
+    } = parse_plugin_selection(plugin, marketplace_name)?;
     let marketplace = find_marketplace_for_plugin(
         &manager,
         codex_home.as_path(),
@@ -137,6 +154,12 @@ pub async fn run_plugin_add(
         })
         .await?;
 
+    if json {
+        let output = JsonPluginAddOutput::from_outcome(outcome);
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
+
     println!(
         "Added plugin `{}` from marketplace `{}`.",
         outcome.plugin_id.plugin_name, outcome.plugin_id.marketplace_name
@@ -147,6 +170,30 @@ pub async fn run_plugin_add(
     );
 
     Ok(())
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsonPluginAddOutput {
+    plugin_id: String,
+    name: String,
+    marketplace_name: String,
+    version: String,
+    installed_path: String,
+    auth_policy: &'static str,
+}
+
+impl JsonPluginAddOutput {
+    fn from_outcome(outcome: PluginInstallOutcome) -> Self {
+        Self {
+            plugin_id: outcome.plugin_id.as_key(),
+            name: outcome.plugin_id.plugin_name,
+            marketplace_name: outcome.plugin_id.marketplace_name,
+            version: outcome.plugin_version,
+            installed_path: outcome.installed_path.as_path().display().to_string(),
+            auth_policy: auth_policy_label(outcome.auth_policy),
+        }
+    }
 }
 
 pub async fn run_plugin_list(
@@ -160,7 +207,7 @@ pub async fn run_plugin_list(
         ..
     } = load_plugin_command_context(overrides).await?;
     let outcome = manager
-        .list_marketplaces_for_config(&plugins_input, &[])
+        .list_marketplaces_for_config(&plugins_input, &[], /*include_openai_curated*/ true)
         .context("failed to list marketplace plugins")?;
     ensure_configured_marketplace_snapshots_loaded(
         codex_home.as_path(),
@@ -393,12 +440,12 @@ impl JsonPluginSource {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct JsonMarketplaceSource {
+pub(crate) struct JsonMarketplaceSource {
     source_type: String,
     source: String,
 }
 
-fn configured_marketplace_sources(
+pub(crate) fn configured_marketplace_sources(
     plugins_input: &PluginsConfigInput,
 ) -> HashMap<String, JsonMarketplaceSource> {
     let Some(user_config) = plugins_input.config_layer_stack.effective_user_config() else {
@@ -449,15 +496,46 @@ pub async fn run_plugin_remove(
     args: RemovePluginArgs,
 ) -> Result<()> {
     let PluginCommandContext { manager, .. } = load_plugin_command_context(overrides).await?;
-    let selection = parse_plugin_selection(args.plugin, args.marketplace_name)?;
+    let RemovePluginArgs {
+        plugin,
+        marketplace_name,
+        json,
+    } = args;
+    let selection = parse_plugin_selection(plugin, marketplace_name)?;
 
-    manager.uninstall_plugin(selection.plugin_key).await?;
+    manager
+        .uninstall_plugin(selection.plugin_key.clone())
+        .await?;
+    if json {
+        let output = JsonPluginRemoveOutput::from_selection(selection);
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
+
     println!(
         "Removed plugin `{}` from marketplace `{}`.",
         selection.plugin_name, selection.marketplace_name
     );
 
     Ok(())
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsonPluginRemoveOutput {
+    plugin_id: String,
+    name: String,
+    marketplace_name: String,
+}
+
+impl JsonPluginRemoveOutput {
+    fn from_selection(selection: PluginSelection) -> Self {
+        Self {
+            plugin_id: selection.plugin_key,
+            name: selection.plugin_name,
+            marketplace_name: selection.marketplace_name,
+        }
+    }
 }
 
 struct PluginCommandContext {
@@ -475,11 +553,29 @@ async fn load_plugin_command_context(
         .context("failed to load configuration")?;
     let plugins_input = config.plugins_config_input();
     let manager = PluginsManager::new(codex_home.to_path_buf());
+    manager.set_auth_mode(load_cli_auth_mode(&config).await);
     Ok(PluginCommandContext {
         codex_home: codex_home.to_path_buf(),
         plugins_input,
         manager,
     })
+}
+
+pub(crate) async fn load_cli_auth_mode(config: &Config) -> Option<AuthMode> {
+    if let Some(api_key) = read_codex_api_key_from_env() {
+        return Some(CodexAuth::from_api_key(&api_key).api_auth_mode());
+    }
+
+    CodexAuth::from_auth_storage(
+        &config.codex_home,
+        config.cli_auth_credentials_store_mode,
+        Some(&config.chatgpt_base_url),
+        config.auth_keyring_backend_kind(),
+    )
+    .await
+    .ok()
+    .flatten()
+    .map(|auth| auth.api_auth_mode())
 }
 
 struct PluginSelection {
@@ -534,7 +630,7 @@ fn find_marketplace_for_plugin(
     plugin_name: &str,
 ) -> Result<ConfiguredMarketplace> {
     let outcome = manager
-        .list_marketplaces_for_config(plugins_input, &[])
+        .list_marketplaces_for_config(plugins_input, &[], /*include_openai_curated*/ true)
         .context("failed to list marketplace plugins")?;
     ensure_configured_marketplace_snapshots_loaded(
         codex_home,

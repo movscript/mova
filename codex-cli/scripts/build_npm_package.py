@@ -17,6 +17,7 @@ RESPONSES_API_PROXY_NPM_ROOT = REPO_ROOT / "codex-rs" / "responses-api-proxy" / 
 CODEX_SDK_ROOT = REPO_ROOT / "sdk" / "typescript"
 CODEX_NPM_NAME = "@movscript/mova"
 CODEX_PACKAGE_COMPONENT = "codex-package"
+CODEX_APP_SERVER_COMPONENT = "codex-app-server"
 
 # `npm_name` is the platform-specific package consumed by `bin/mova.js`.
 # Each platform package is published independently and referenced by the root
@@ -72,12 +73,12 @@ PACKAGE_EXPANSIONS: dict[str, list[str]] = {
 
 PACKAGE_NATIVE_COMPONENTS: dict[str, list[str]] = {
     "mova": [],
-    "mova-linux-x64": [CODEX_PACKAGE_COMPONENT],
-    "mova-linux-arm64": [CODEX_PACKAGE_COMPONENT],
-    "mova-darwin-x64": [CODEX_PACKAGE_COMPONENT],
-    "mova-darwin-arm64": [CODEX_PACKAGE_COMPONENT],
-    "mova-win32-x64": [CODEX_PACKAGE_COMPONENT],
-    "mova-win32-arm64": [CODEX_PACKAGE_COMPONENT],
+    "mova-linux-x64": [CODEX_PACKAGE_COMPONENT, CODEX_APP_SERVER_COMPONENT],
+    "mova-linux-arm64": [CODEX_PACKAGE_COMPONENT, CODEX_APP_SERVER_COMPONENT],
+    "mova-darwin-x64": [CODEX_PACKAGE_COMPONENT, CODEX_APP_SERVER_COMPONENT],
+    "mova-darwin-arm64": [CODEX_PACKAGE_COMPONENT, CODEX_APP_SERVER_COMPONENT],
+    "mova-win32-x64": [CODEX_PACKAGE_COMPONENT, CODEX_APP_SERVER_COMPONENT],
+    "mova-win32-arm64": [CODEX_PACKAGE_COMPONENT, CODEX_APP_SERVER_COMPONENT],
     "codex-responses-api-proxy": ["codex-responses-api-proxy"],
     "mova-sdk": [],
 }
@@ -377,6 +378,7 @@ def copy_native_binaries(
     components_set = set(components)
     if not components_set:
         return
+    target_level_components = {CODEX_PACKAGE_COMPONENT, CODEX_APP_SERVER_COMPONENT}
 
     vendor_dest = staging_dir / "vendor"
     if vendor_dest.exists():
@@ -396,14 +398,14 @@ def copy_native_binaries(
 
         dest_target_dir = vendor_dest / target_dir.name
 
-        if CODEX_PACKAGE_COMPONENT in components_set:
+        if components_set & target_level_components:
             if dest_target_dir.exists():
                 shutil.rmtree(dest_target_dir)
             shutil.copytree(target_dir, dest_target_dir)
         else:
             dest_target_dir.mkdir(parents=True, exist_ok=True)
 
-        for component in sorted(components_set - {CODEX_PACKAGE_COMPONENT}):
+        for component in sorted(components_set - target_level_components):
             src_component_dir = target_dir / component
             if not src_component_dir.exists():
                 raise RuntimeError(

@@ -40,6 +40,9 @@ CODEX_PLATFORM_PACKAGES = getattr(_BUILD_MODULE, "CODEX_PLATFORM_PACKAGES", {})
 CODEX_PACKAGE_COMPONENT = getattr(
     _BUILD_MODULE, "CODEX_PACKAGE_COMPONENT", "codex-package"
 )
+CODEX_APP_SERVER_COMPONENT = getattr(
+    _BUILD_MODULE, "CODEX_APP_SERVER_COMPONENT", "codex-app-server"
+)
 PLATFORM_PACKAGE_BY_TARGET = {
     package_config["target_triple"]: package_name
     for package_name, package_config in CODEX_PLATFORM_PACKAGES.items()
@@ -254,6 +257,8 @@ def install_from_workflow_artifacts(
     download_artifacts(workflow_id, artifacts_dir, artifacts)
     if CODEX_PACKAGE_COMPONENT in components:
         install_codex_package_archives(artifacts_dir, vendor_dir, targets)
+    if CODEX_APP_SERVER_COMPONENT in components:
+        install_codex_app_server_package_archives(artifacts_dir, vendor_dir, targets)
     install_binary_components(
         artifacts_dir,
         vendor_dir,
@@ -267,10 +272,11 @@ def select_target_artifacts(
     components: Sequence[str],
     targets: Sequence[str],
 ) -> list[WorkflowArtifact]:
-    needs_target_artifacts = CODEX_PACKAGE_COMPONENT in components or any(
+    needs_primary_artifacts = CODEX_PACKAGE_COMPONENT in components or any(
         component in BINARY_COMPONENTS for component in components
     )
-    if not needs_target_artifacts:
+    needs_app_server_artifacts = CODEX_APP_SERVER_COMPONENT in components
+    if not needs_primary_artifacts and not needs_app_server_artifacts:
         return []
 
     artifacts_by_name = {
@@ -278,17 +284,40 @@ def select_target_artifacts(
     }
     selected_artifacts: list[WorkflowArtifact] = []
     for target in targets:
-        for artifact_name in [target, f"{target}-unsigned"]:
-            artifact = artifacts_by_name.get(artifact_name)
-            if artifact is not None:
-                selected_artifacts.append(artifact)
-                break
-        else:
-            raise FileNotFoundError(
-                f"Expected workflow artifact not found for target {target}"
+        if needs_primary_artifacts:
+            selected_artifacts.append(
+                select_named_artifact(
+                    artifacts_by_name,
+                    [target, f"{target}-unsigned"],
+                    f"target {target}",
+                )
+            )
+        if needs_app_server_artifacts:
+            selected_artifacts.append(
+                select_named_artifact(
+                    artifacts_by_name,
+                    [f"{target}-app-server", f"{target}-app-server-unsigned"],
+                    f"app-server target {target}",
+                )
             )
 
     return selected_artifacts
+
+
+def select_named_artifact(
+    artifacts_by_name: dict[str, WorkflowArtifact],
+    artifact_names: Sequence[str],
+    description: str,
+) -> WorkflowArtifact:
+    for artifact_name in artifact_names:
+        artifact = artifacts_by_name.get(artifact_name)
+        if artifact is not None:
+            return artifact
+
+    expected = ", ".join(artifact_names)
+    raise FileNotFoundError(
+        f"Expected workflow artifact not found for {description}: {expected}"
+    )
 
 
 def list_workflow_artifacts(workflow_id: str) -> list[WorkflowArtifact]:
@@ -397,6 +426,69 @@ def install_single_codex_package_archive(
         archive.extractall(dest_dir, filter="data")
 
     return dest_dir
+
+
+def install_codex_app_server_package_archives(
+    artifacts_dir: Path,
+    vendor_dir: Path,
+    targets: Sequence[str],
+) -> None:
+    if not targets:
+        return
+
+    print(
+        "Installing Codex app-server binaries for targets: " + ", ".join(targets),
+        flush=True,
+    )
+    max_workers = min(len(targets), max(1, (os.cpu_count() or 1)))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                install_single_codex_app_server_package_archive,
+                artifacts_dir,
+                vendor_dir,
+                target,
+            ): target
+            for target in targets
+        }
+        for future in as_completed(futures):
+            installed_path = future.result()
+            print(f"  installed {installed_path}", flush=True)
+
+
+def install_single_codex_app_server_package_archive(
+    artifacts_dir: Path,
+    vendor_dir: Path,
+    target: str,
+) -> Path:
+    artifact_subdir = artifact_dir_for_target(artifacts_dir, f"{target}-app-server")
+    archive_path = artifact_subdir / f"codex-app-server-package-{target}.tar.gz"
+    if not archive_path.exists():
+        raise FileNotFoundError(
+            f"Expected app-server package archive not found: {archive_path}"
+        )
+
+    executable_name = (
+        "codex-app-server.exe" if "windows" in target else "codex-app-server"
+    )
+    dest = vendor_dir / target / "bin" / executable_name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory(prefix=f"mova-app-server-{target}-") as tmp:
+        tmp_path = Path(tmp)
+        with tarfile.open(archive_path, "r:gz") as archive:
+            archive.extractall(tmp_path, filter="data")
+
+        src = tmp_path / "bin" / executable_name
+        if not src.exists():
+            raise FileNotFoundError(
+                f"Expected app-server binary not found in archive: bin/{executable_name}"
+            )
+        shutil.copy2(src, dest)
+
+    if "windows" not in target:
+        dest.chmod(0o755)
+    return dest
 
 
 def install_binary_components(

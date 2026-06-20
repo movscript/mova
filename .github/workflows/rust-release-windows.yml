@@ -10,19 +10,19 @@ on:
         type: string
         default: >-
           [
-            {"runner":"windows-x64","target":"x86_64-pc-windows-msvc","bundle":"primary","binaries":"codex codex-responses-api-proxy"},
-            {"runner":"windows-arm64","target":"aarch64-pc-windows-msvc","bundle":"primary","binaries":"codex codex-responses-api-proxy"},
-            {"runner":"windows-x64","target":"x86_64-pc-windows-msvc","bundle":"helpers","binaries":"codex-windows-sandbox-setup codex-command-runner"},
-            {"runner":"windows-arm64","target":"aarch64-pc-windows-msvc","bundle":"helpers","binaries":"codex-windows-sandbox-setup codex-command-runner"},
-            {"runner":"windows-x64","target":"x86_64-pc-windows-msvc","bundle":"app-server","binaries":"codex-app-server"},
-            {"runner":"windows-arm64","target":"aarch64-pc-windows-msvc","bundle":"app-server","binaries":"codex-app-server"}
+            {"runner":"windows-2022","target":"x86_64-pc-windows-msvc","bundle":"primary","binaries":"codex codex-responses-api-proxy"},
+            {"runner":"windows-2022","target":"aarch64-pc-windows-msvc","bundle":"primary","binaries":"codex codex-responses-api-proxy"},
+            {"runner":"windows-2022","target":"x86_64-pc-windows-msvc","bundle":"helpers","binaries":"codex-windows-sandbox-setup codex-command-runner"},
+            {"runner":"windows-2022","target":"aarch64-pc-windows-msvc","bundle":"helpers","binaries":"codex-windows-sandbox-setup codex-command-runner"},
+            {"runner":"windows-2022","target":"x86_64-pc-windows-msvc","bundle":"app-server","binaries":"codex-app-server"},
+            {"runner":"windows-2022","target":"aarch64-pc-windows-msvc","bundle":"app-server","binaries":"codex-app-server"}
           ]
       build-windows-matrix:
         type: string
         default: >-
           [
-            {"runner":"windows-x64","target":"x86_64-pc-windows-msvc"},
-            {"runner":"windows-x64","target":"aarch64-pc-windows-msvc"}
+            {"runner":"windows-2022","target":"x86_64-pc-windows-msvc"},
+            {"runner":"windows-2022","target":"aarch64-pc-windows-msvc"}
           ]
 
 # Cargo's libgit2 transport has been flaky when fetching git dependencies with
@@ -34,9 +34,7 @@ env:
 jobs:
   build-windows-binaries:
     name: Build Windows binaries - ${{ matrix.runner }} - ${{ matrix.target }} - ${{ matrix.bundle }}
-    runs-on:
-      group: ${{ github.event.repository.name }}-runners
-      labels: ${{ format('{0}-{1}', github.event.repository.name, matrix.runner) }}
+    runs-on: ${{ matrix.runner }}
     # Windows release builds can exceed an hour, so keep the timeout aligned
     # with the top-level release build headroom.
     timeout-minutes: 90
@@ -170,9 +168,7 @@ jobs:
     needs:
       - build-windows-binaries
     name: Build - ${{ matrix.runner }} - ${{ matrix.target }}
-    runs-on:
-      group: ${{ github.event.repository.name }}-runners
-      labels: ${{ format('{0}-{1}', github.event.repository.name, matrix.runner) }}
+    runs-on: ${{ matrix.runner }}
     environment:
       name: azure-artifact-signing
       deployment: false

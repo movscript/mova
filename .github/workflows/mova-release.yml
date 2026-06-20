@@ -5,8 +5,8 @@
 # git push origin mova-v0.1.0
 # ```
 #
-# This workflow currently publishes unsigned macOS artifacts so the Mova npm
-# release path can be tested without OpenAI's private signing infrastructure.
+# This workflow currently publishes unsigned macOS artifacts and signed Windows
+# x64 artifacts for the Mova npm release path.
 
 name: mova-release
 on:
@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  NPM_RELEASE_TARGETS: aarch64-apple-darwin
+  NPM_RELEASE_TARGETS: aarch64-apple-darwin x86_64-pc-windows-msvc
 
 jobs:
   tag-check:
@@ -743,17 +743,36 @@ jobs:
           path: codex-rs/dist/${{ matrix.target }}/*
           if-no-files-found: error
 
+  build-windows:
+    needs: tag-check
+    uses: ./.github/workflows/rust-release-windows.yml
+    with:
+      windows-targets: '["x86_64-pc-windows-msvc"]'
+      build-windows-binaries-matrix: >-
+        [
+          {"runner":"windows-x64","target":"x86_64-pc-windows-msvc","bundle":"primary","binaries":"codex codex-responses-api-proxy"},
+          {"runner":"windows-x64","target":"x86_64-pc-windows-msvc","bundle":"helpers","binaries":"codex-windows-sandbox-setup codex-command-runner"},
+          {"runner":"windows-x64","target":"x86_64-pc-windows-msvc","bundle":"app-server","binaries":"codex-app-server"}
+        ]
+      build-windows-matrix: >-
+        [
+          {"runner":"windows-x64","target":"x86_64-pc-windows-msvc"}
+        ]
+    secrets: inherit
+
   release:
     needs:
       - tag-check
       - build
       - finalize-macos
+      - build-windows
     if: >-
       ${{
         always() &&
         needs.tag-check.result == 'success' &&
         needs.build.result == 'success' &&
-        needs.finalize-macos.result == 'success'
+        needs.finalize-macos.result == 'success' &&
+        needs.build-windows.result == 'success'
       }}
     name: release
     runs-on: ubuntu-latest
@@ -803,6 +822,12 @@ jobs:
         with:
           path: dist
           pattern: "aarch64-apple-darwin-app-server"
+
+      - name: Download Windows x64 target artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist
+          pattern: "x86_64-pc-windows-msvc"
 
       - name: Download supplemental release artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

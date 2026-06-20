@@ -2,6 +2,28 @@ name: rust-release-windows
 
 on:
   workflow_call:
+    inputs:
+      windows-targets:
+        type: string
+        default: '["aarch64-pc-windows-msvc","x86_64-pc-windows-msvc"]'
+      build-windows-binaries-matrix:
+        type: string
+        default: >-
+          [
+            {"runner":"windows-x64","target":"x86_64-pc-windows-msvc","bundle":"primary","binaries":"codex codex-responses-api-proxy"},
+            {"runner":"windows-arm64","target":"aarch64-pc-windows-msvc","bundle":"primary","binaries":"codex codex-responses-api-proxy"},
+            {"runner":"windows-x64","target":"x86_64-pc-windows-msvc","bundle":"helpers","binaries":"codex-windows-sandbox-setup codex-command-runner"},
+            {"runner":"windows-arm64","target":"aarch64-pc-windows-msvc","bundle":"helpers","binaries":"codex-windows-sandbox-setup codex-command-runner"},
+            {"runner":"windows-x64","target":"x86_64-pc-windows-msvc","bundle":"app-server","binaries":"codex-app-server"},
+            {"runner":"windows-arm64","target":"aarch64-pc-windows-msvc","bundle":"app-server","binaries":"codex-app-server"}
+          ]
+      build-windows-matrix:
+        type: string
+        default: >-
+          [
+            {"runner":"windows-x64","target":"x86_64-pc-windows-msvc"},
+            {"runner":"windows-x64","target":"aarch64-pc-windows-msvc"}
+          ]
 
 # Cargo's libgit2 transport has been flaky when fetching git dependencies with
 # nested submodules. Prefer the system git CLI across every Cargo invocation.
@@ -12,7 +34,9 @@ env:
 jobs:
   build-windows-binaries:
     name: Build Windows binaries - ${{ matrix.runner }} - ${{ matrix.target }} - ${{ matrix.bundle }}
-    runs-on: ${{ matrix.runs_on }}
+    runs-on:
+      group: ${{ github.event.repository.name }}-runners
+      labels: ${{ format('{0}-{1}', github.event.repository.name, matrix.runner) }}
     # Windows release builds can exceed an hour, so keep the timeout aligned
     # with the top-level release build headroom.
     timeout-minutes: 90
@@ -24,49 +48,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: windows-x64
-            target: x86_64-pc-windows-msvc
-            bundle: primary
-            binaries: "codex codex-responses-api-proxy"
-            runs_on:
-              group: ${{ github.event.repository.name }}-runners
-              labels: ${{ github.event.repository.name }}-windows-x64
-          - runner: windows-arm64
-            target: aarch64-pc-windows-msvc
-            bundle: primary
-            binaries: "codex codex-responses-api-proxy"
-            runs_on:
-              group: ${{ github.event.repository.name }}-runners
-              labels: ${{ github.event.repository.name }}-windows-arm64
-          - runner: windows-x64
-            target: x86_64-pc-windows-msvc
-            bundle: helpers
-            binaries: "codex-windows-sandbox-setup codex-command-runner"
-            runs_on:
-              group: ${{ github.event.repository.name }}-runners
-              labels: ${{ github.event.repository.name }}-windows-x64
-          - runner: windows-arm64
-            target: aarch64-pc-windows-msvc
-            bundle: helpers
-            binaries: "codex-windows-sandbox-setup codex-command-runner"
-            runs_on:
-              group: ${{ github.event.repository.name }}-runners
-              labels: ${{ github.event.repository.name }}-windows-arm64
-          - runner: windows-x64
-            target: x86_64-pc-windows-msvc
-            bundle: app-server
-            binaries: "codex-app-server"
-            runs_on:
-              group: ${{ github.event.repository.name }}-runners
-              labels: ${{ github.event.repository.name }}-windows-x64
-          - runner: windows-arm64
-            target: aarch64-pc-windows-msvc
-            bundle: app-server
-            binaries: "codex-app-server"
-            runs_on:
-              group: ${{ github.event.repository.name }}-runners
-              labels: ${{ github.event.repository.name }}-windows-arm64
+        include: ${{ fromJSON(inputs['build-windows-binaries-matrix']) }}
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -157,9 +139,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - aarch64-pc-windows-msvc
-          - x86_64-pc-windows-msvc
+        target: ${{ fromJSON(inputs['windows-targets']) }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -190,7 +170,9 @@ jobs:
     needs:
       - build-windows-binaries
     name: Build - ${{ matrix.runner }} - ${{ matrix.target }}
-    runs-on: ${{ matrix.runs_on }}
+    runs-on:
+      group: ${{ github.event.repository.name }}-runners
+      labels: ${{ format('{0}-{1}', github.event.repository.name, matrix.runner) }}
     environment:
       name: azure-artifact-signing
       deployment: false
@@ -204,17 +186,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: windows-x64
-            target: x86_64-pc-windows-msvc
-            runs_on:
-              group: ${{ github.event.repository.name }}-runners
-              labels: ${{ github.event.repository.name }}-windows-x64
-          - runner: windows-x64
-            target: aarch64-pc-windows-msvc
-            runs_on:
-              group: ${{ github.event.repository.name }}-runners
-              labels: ${{ github.event.repository.name }}-windows-x64
+        include: ${{ fromJSON(inputs['build-windows-matrix']) }}
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

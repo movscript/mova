@@ -283,25 +283,46 @@ def select_target_artifacts(
         artifact.name: artifact for artifact in list_workflow_artifacts(workflow_id)
     }
     selected_artifacts: list[WorkflowArtifact] = []
+    selected_artifact_names: set[str] = set()
     for target in targets:
         if needs_primary_artifacts:
-            selected_artifacts.append(
+            append_selected_artifact(
+                selected_artifacts,
+                selected_artifact_names,
                 select_named_artifact(
                     artifacts_by_name,
                     [target, f"{target}-unsigned"],
                     f"target {target}",
-                )
+                ),
             )
         if needs_app_server_artifacts:
-            selected_artifacts.append(
+            append_selected_artifact(
+                selected_artifacts,
+                selected_artifact_names,
                 select_named_artifact(
                     artifacts_by_name,
-                    [f"{target}-app-server", f"{target}-app-server-unsigned"],
+                    [
+                        f"{target}-app-server",
+                        f"{target}-app-server-unsigned",
+                        target,
+                        f"{target}-unsigned",
+                    ],
                     f"app-server target {target}",
-                )
+                ),
             )
 
     return selected_artifacts
+
+
+def append_selected_artifact(
+    selected_artifacts: list[WorkflowArtifact],
+    selected_artifact_names: set[str],
+    artifact: WorkflowArtifact,
+) -> None:
+    if artifact.name in selected_artifact_names:
+        return
+    selected_artifact_names.add(artifact.name)
+    selected_artifacts.append(artifact)
 
 
 def select_named_artifact(
@@ -463,6 +484,9 @@ def install_single_codex_app_server_package_archive(
 ) -> Path:
     artifact_subdir = artifact_dir_for_target(artifacts_dir, f"{target}-app-server")
     archive_path = artifact_subdir / f"codex-app-server-package-{target}.tar.gz"
+    if not archive_path.exists():
+        artifact_subdir = artifact_dir_for_target(artifacts_dir, target)
+        archive_path = artifact_subdir / f"codex-app-server-package-{target}.tar.gz"
     if not archive_path.exists():
         raise FileNotFoundError(
             f"Expected app-server package archive not found: {archive_path}"

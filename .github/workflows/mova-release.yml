@@ -761,6 +761,7 @@ jobs:
         [
           {"runner":"windows-2022","target":"x86_64-pc-windows-msvc"}
         ]
+      sign-windows-binaries: false
     secrets: inherit
 
   release:

@@ -24,6 +24,9 @@ on:
             {"runner":"windows-2022","target":"x86_64-pc-windows-msvc"},
             {"runner":"windows-2022","target":"aarch64-pc-windows-msvc"}
           ]
+      sign-windows-binaries:
+        type: boolean
+        default: true
 
 # Cargo's libgit2 transport has been flaky when fetching git dependencies with
 # nested submodules. Prefer the system git CLI across every Cargo invocation.
@@ -216,6 +219,7 @@ jobs:
           done
 
       - name: Sign Windows binaries with Azure Trusted Signing
+        if: ${{ inputs.sign-windows-binaries }}
         uses: ./.github/actions/windows-code-sign
         with:
           target: ${{ matrix.target }}

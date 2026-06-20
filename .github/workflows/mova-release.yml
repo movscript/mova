@@ -746,6 +746,9 @@ jobs:
   build-windows:
     needs: tag-check
     uses: ./.github/workflows/rust-release-windows.yml
+    permissions:
+      contents: read
+      id-token: write
     with:
       windows-targets: '["x86_64-pc-windows-msvc"]'
       build-windows-binaries-matrix: >-

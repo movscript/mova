@@ -27,6 +27,9 @@ on:
       sign-windows-binaries:
         type: boolean
         default: true
+      build-python-runtime-wheel:
+        type: boolean
+        default: true
 
 # Cargo's libgit2 transport has been flaky when fetching git dependencies with
 # nested submodules. Prefer the system git CLI across every Cargo invocation.
@@ -269,6 +272,7 @@ jobs:
                 --archive-dir "dist/$target"
 
       - name: Build Python runtime wheel
+        if: ${{ inputs.build-python-runtime-wheel }}
         shell: bash
         run: |
           set -euo pipefail
@@ -300,6 +304,7 @@ jobs:
           "${RUNNER_TEMP}/python-runtime-build-venv/Scripts/python.exe" -m build --wheel --outdir "$wheel_dir" "$stage_dir"
 
       - name: Upload Python runtime wheel
+        if: ${{ inputs.build-python-runtime-wheel }}
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: python-runtime-wheel-${{ matrix.target }}

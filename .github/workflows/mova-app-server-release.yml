@@ -10,38 +10,69 @@ on:
   push:
     tags:
       - "mova-app-server-v*.*.*"
+    branches:
+      - "mova-app-server-incremental-*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "App-server npm version to publish, for example 0.0.1-alpha.13"
+        required: true
+        default: "0.0.1-alpha.13"
+        type: string
+      targets:
+        description: "Space-separated Rust targets to build and publish"
+        required: true
+        default: "x86_64-apple-darwin aarch64-pc-windows-msvc"
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: true
 
 env:
-  APP_SERVER_RELEASE_TARGETS: aarch64-apple-darwin x86_64-pc-windows-msvc
+  APP_SERVER_RELEASE_TARGETS: ${{ github.event_name == 'workflow_dispatch' && inputs.targets || startsWith(github.ref_name, 'mova-app-server-incremental-') && 'x86_64-apple-darwin aarch64-pc-windows-msvc' || 'aarch64-apple-darwin x86_64-pc-windows-msvc' }}
 
 jobs:
   tag-check:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
       should_publish_npm: ${{ steps.npm_publish_settings.outputs.should_publish }}
       npm_tag: ${{ steps.npm_publish_settings.outputs.npm_tag }}
     steps:
-      - name: Validate Mova app-server release tag
+      - name: Validate Mova app-server release version
         id: version
         shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          echo "::group::Tag validation"
+          echo "::group::Version validation"
 
-          [[ "${GITHUB_REF_TYPE}" == "tag" ]] \
-            || { echo "Not a tag ref"; exit 1; }
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            version="${INPUT_VERSION}"
+            tag="mova-app-server-v${version}"
+          elif [[ "${GITHUB_REF_TYPE}" == "branch" && "${GITHUB_REF_NAME}" =~ ^mova-app-server-incremental-([0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta)(\.[0-9]+)?)?)$ ]]; then
+            version="${GITHUB_REF_NAME#mova-app-server-incremental-}"
+            tag="mova-app-server-v${version}"
+          else
+            [[ "${GITHUB_REF_TYPE}" == "tag" ]] \
+              || { echo "Not a tag ref"; exit 1; }
 
-          [[ "${GITHUB_REF_NAME}" =~ ^mova-app-server-v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta)(\.[0-9]+)?)?$ ]] \
-            || { echo "Tag '${GITHUB_REF_NAME}' doesn't match expected format"; exit 1; }
+            [[ "${GITHUB_REF_NAME}" =~ ^mova-app-server-v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta)(\.[0-9]+)?)?$ ]] \
+              || { echo "Tag '${GITHUB_REF_NAME}' doesn't match expected format"; exit 1; }
 
-          version="${GITHUB_REF_NAME#mova-app-server-v}"
+            version="${GITHUB_REF_NAME#mova-app-server-v}"
+            tag="${GITHUB_REF_NAME}"
+          fi
+
+          [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta)(\.[0-9]+)?)?$ ]] \
+            || { echo "Version '${version}' doesn't match expected format"; exit 1; }
+
           echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "Mova app-server release tag is valid (${version})"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "Mova app-server release version is valid (${version})"
           echo "::endgroup::"
 
       - name: Determine npm publish settings
@@ -82,12 +113,16 @@ jobs:
         include:
           - runner: macos-15
             target: aarch64-apple-darwin
+          - runner: macos-15
+            target: x86_64-apple-darwin
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        if: ${{ contains(env.APP_SERVER_RELEASE_TARGETS, matrix.target) }}
         with:
           persist-credentials: false
 
       - name: Print runner specs
+        if: ${{ contains(env.APP_SERVER_RELEASE_TARGETS, matrix.target) }}
         shell: bash
         run: |
           set -euo pipefail
@@ -102,21 +137,25 @@ jobs:
           df -h .
 
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        if: ${{ contains(env.APP_SERVER_RELEASE_TARGETS, matrix.target) }}
         with:
           targets: ${{ matrix.target }}
 
       - name: Configure rusty_v8 artifact overrides and verify checksums
+        if: ${{ contains(env.APP_SERVER_RELEASE_TARGETS, matrix.target) }}
         uses: ./.github/actions/setup-rusty-v8
         with:
           target: ${{ matrix.target }}
 
       - name: Cargo build app-server
+        if: ${{ contains(env.APP_SERVER_RELEASE_TARGETS, matrix.target) }}
         shell: bash
         run: |
           set -euo pipefail
           cargo build --target "${{ matrix.target }}" --release --timings --bin codex-app-server
 
       - name: Stage app-server archive
+        if: ${{ contains(env.APP_SERVER_RELEASE_TARGETS, matrix.target) }}
         shell: bash
         run: |
           set -euo pipefail
@@ -134,6 +173,7 @@ jobs:
           ls -lh "$archive_dir"
 
       - name: Upload app-server archive
+        if: ${{ contains(env.APP_SERVER_RELEASE_TARGETS, matrix.target) }}
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: ${{ matrix.target }}-app-server
@@ -158,12 +198,16 @@ jobs:
         include:
           - runner: windows-2022
             target: x86_64-pc-windows-msvc
+          - runner: windows-2022
+            target: aarch64-pc-windows-msvc
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        if: ${{ contains(env.APP_SERVER_RELEASE_TARGETS, matrix.target) }}
         with:
           persist-credentials: false
 
       - name: Print runner specs
+        if: ${{ contains(env.APP_SERVER_RELEASE_TARGETS, matrix.target) }}
         shell: powershell
         run: |
           $computer = Get-CimInstance Win32_ComputerSystem
@@ -178,15 +222,18 @@ jobs:
           Get-PSDrive -PSProvider FileSystem | Format-Table -AutoSize Name, @{Name='Size(GB)';Expression={[math]::Round(($_.Used + $_.Free) / 1GB, 1)}}, @{Name='Free(GB)';Expression={[math]::Round($_.Free / 1GB, 1)}}
 
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        if: ${{ contains(env.APP_SERVER_RELEASE_TARGETS, matrix.target) }}
         with:
           targets: ${{ matrix.target }}
 
       - name: Configure LLVM linker
+        if: ${{ contains(env.APP_SERVER_RELEASE_TARGETS, matrix.target) }}
         uses: ./.github/actions/setup-msvc-env
         with:
           target: ${{ matrix.target }}
 
       - name: Cargo build app-server
+        if: ${{ contains(env.APP_SERVER_RELEASE_TARGETS, matrix.target) }}
         shell: bash
         run: |
           set -euo pipefail
@@ -197,6 +244,7 @@ jobs:
           cargo build --target "$target" --release --timings --bin codex-app-server
 
       - name: Stage app-server archive
+        if: ${{ contains(env.APP_SERVER_RELEASE_TARGETS, matrix.target) }}
         shell: bash
         run: |
           set -euo pipefail
@@ -212,6 +260,7 @@ jobs:
           ls -lh "$archive_dir"
 
       - name: Upload app-server archive
+        if: ${{ contains(env.APP_SERVER_RELEASE_TARGETS, matrix.target) }}
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: ${{ matrix.target }}-app-server
@@ -237,7 +286,7 @@ jobs:
       actions: read
     outputs:
       version: ${{ steps.release_metadata.outputs.version }}
-      tag: ${{ github.ref_name }}
+      tag: ${{ steps.release_metadata.outputs.tag }}
       should_publish_npm: ${{ steps.release_metadata.outputs.should_publish_npm }}
       npm_tag: ${{ steps.release_metadata.outputs.npm_tag }}
     steps:
@@ -262,6 +311,7 @@ jobs:
         run: |
           {
             echo "version=${{ needs.tag-check.outputs.version }}"
+            echo "tag=${{ needs.tag-check.outputs.tag }}"
             echo "should_publish_npm=${{ needs.tag-check.outputs.should_publish_npm }}"
             echo "npm_tag=${{ needs.tag-check.outputs.npm_tag }}"
           } >> "$GITHUB_OUTPUT"
@@ -304,10 +354,21 @@ jobs:
             --release-version "$RELEASE_VERSION"
             --workflow-url "$workflow_url"
             --artifacts-dir "${GITHUB_WORKSPACE}/dist"
-            --package mova-app-server-darwin-arm64
-            --package mova-app-server-win32-x64
           )
           for target in ${APP_SERVER_RELEASE_TARGETS}; do
+            case "$target" in
+              x86_64-unknown-linux-musl) package="mova-app-server-linux-x64" ;;
+              aarch64-unknown-linux-musl) package="mova-app-server-linux-arm64" ;;
+              x86_64-apple-darwin) package="mova-app-server-darwin-x64" ;;
+              aarch64-apple-darwin) package="mova-app-server-darwin-arm64" ;;
+              x86_64-pc-windows-msvc) package="mova-app-server-win32-x64" ;;
+              aarch64-pc-windows-msvc) package="mova-app-server-win32-arm64" ;;
+              *)
+                echo "Unexpected app-server release target: $target"
+                exit 1
+                ;;
+            esac
+            stage_args+=(--package "$package")
             stage_args+=(--target "$target")
           done
           ./scripts/stage_mova_npm_packages.py "${stage_args[@]}"
@@ -316,7 +377,7 @@ jobs:
         uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2.6.1
         with:
           name: app-server ${{ needs.tag-check.outputs.version }}
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ needs.tag-check.outputs.tag }}
           body_path: ${{ steps.release_notes.outputs.path }}
           files: dist/**
           overwrite_files: true

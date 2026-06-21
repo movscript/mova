@@ -37,6 +37,9 @@ _SPEC.loader.exec_module(_BUILD_MODULE)
 PACKAGE_NATIVE_COMPONENTS = getattr(_BUILD_MODULE, "PACKAGE_NATIVE_COMPONENTS", {})
 PACKAGE_EXPANSIONS = getattr(_BUILD_MODULE, "PACKAGE_EXPANSIONS", {})
 CODEX_PLATFORM_PACKAGES = getattr(_BUILD_MODULE, "CODEX_PLATFORM_PACKAGES", {})
+CODEX_APP_SERVER_PLATFORM_PACKAGES = getattr(
+    _BUILD_MODULE, "CODEX_APP_SERVER_PLATFORM_PACKAGES", {}
+)
 CODEX_PACKAGE_COMPONENT = getattr(
     _BUILD_MODULE, "CODEX_PACKAGE_COMPONENT", "codex-package"
 )
@@ -47,7 +50,6 @@ PLATFORM_PACKAGE_BY_TARGET = {
     package_config["target_triple"]: package_name
     for package_name, package_config in CODEX_PLATFORM_PACKAGES.items()
 }
-
 
 @dataclass(frozen=True)
 class BinaryComponent:
@@ -633,6 +635,9 @@ def tarball_name_for_package(package: str, version: str) -> str:
     if package in CODEX_PLATFORM_PACKAGES:
         platform = package.removeprefix("mova-")
         return f"mova-npm-{platform}-{version}.tgz"
+    if package in CODEX_APP_SERVER_PLATFORM_PACKAGES:
+        platform = package.removeprefix("mova-app-server-")
+        return f"mova-app-server-npm-{platform}-{version}.tgz"
     return f"{package}-npm-{version}.tgz"
 
 

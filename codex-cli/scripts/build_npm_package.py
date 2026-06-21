@@ -67,6 +67,16 @@ CODEX_PLATFORM_PACKAGES: dict[str, dict[str, str]] = {
     },
 }
 
+CODEX_APP_SERVER_PLATFORM_PACKAGES: dict[str, dict[str, str]] = {
+    package_name.replace("mova-", "mova-app-server-", 1): {
+        **package_config,
+        "npm_name": package_config["npm_name"].replace(
+            "/mova-", "/mova-app-server-", 1
+        ),
+    }
+    for package_name, package_config in CODEX_PLATFORM_PACKAGES.items()
+}
+
 PACKAGE_EXPANSIONS: dict[str, list[str]] = {
     "mova": ["mova", *CODEX_PLATFORM_PACKAGES],
 }
@@ -79,13 +89,19 @@ PACKAGE_NATIVE_COMPONENTS: dict[str, list[str]] = {
     "mova-darwin-arm64": [CODEX_PACKAGE_COMPONENT, CODEX_APP_SERVER_COMPONENT],
     "mova-win32-x64": [CODEX_PACKAGE_COMPONENT, CODEX_APP_SERVER_COMPONENT],
     "mova-win32-arm64": [CODEX_PACKAGE_COMPONENT, CODEX_APP_SERVER_COMPONENT],
+    **{
+        package_name: [CODEX_APP_SERVER_COMPONENT]
+        for package_name in CODEX_APP_SERVER_PLATFORM_PACKAGES
+    },
     "codex-responses-api-proxy": ["codex-responses-api-proxy"],
     "mova-sdk": [],
 }
 
 PACKAGE_TARGET_FILTERS: dict[str, str] = {
     package_name: package_config["target_triple"]
-    for package_name, package_config in CODEX_PLATFORM_PACKAGES.items()
+    for package_name, package_config in (
+        CODEX_PLATFORM_PACKAGES | CODEX_APP_SERVER_PLATFORM_PACKAGES
+    ).items()
 }
 
 PACKAGE_CHOICES = tuple(PACKAGE_NATIVE_COMPONENTS)
@@ -210,6 +226,12 @@ def main() -> int:
                     "Verify native payload contents:\n"
                     f"    ls {staging_dir_str}/vendor\n\n"
                 )
+            elif package in CODEX_APP_SERVER_PLATFORM_PACKAGES:
+                print(
+                    f"Staged version {version} for release in {staging_dir_str}\n\n"
+                    "Verify app-server payload contents:\n"
+                    f"    ls {staging_dir_str}/vendor\n\n"
+                )
             else:
                 print(
                     f"Staged version {version} for release in {staging_dir_str}\n\n"
@@ -262,8 +284,13 @@ def stage_sources(
             shutil.copy2(readme_src, staging_dir / "README.md")
 
         package_json_path = CODEX_CLI_ROOT / "package.json"
-    elif package in CODEX_PLATFORM_PACKAGES:
-        platform_package = CODEX_PLATFORM_PACKAGES[package]
+    elif (
+        package in CODEX_PLATFORM_PACKAGES
+        or package in CODEX_APP_SERVER_PLATFORM_PACKAGES
+    ):
+        platform_package = (
+            CODEX_PLATFORM_PACKAGES | CODEX_APP_SERVER_PLATFORM_PACKAGES
+        )[package]
 
         readme_src = REPO_ROOT / "README.md"
         if readme_src.exists():

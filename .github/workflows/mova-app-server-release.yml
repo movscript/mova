@@ -1,0 +1,428 @@
+# Release workflow for Mova app-server-only npm packages.
+# To release:
+# ```
+# git tag -a mova-app-server-v0.1.0 -m "Release app-server 0.1.0"
+# git push origin mova-app-server-v0.1.0
+# ```
+
+name: mova-app-server-release
+on:
+  push:
+    tags:
+      - "mova-app-server-v*.*.*"
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+env:
+  APP_SERVER_RELEASE_TARGETS: aarch64-apple-darwin x86_64-pc-windows-msvc
+
+jobs:
+  tag-check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      should_publish_npm: ${{ steps.npm_publish_settings.outputs.should_publish }}
+      npm_tag: ${{ steps.npm_publish_settings.outputs.npm_tag }}
+    steps:
+      - name: Validate Mova app-server release tag
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::Tag validation"
+
+          [[ "${GITHUB_REF_TYPE}" == "tag" ]] \
+            || { echo "Not a tag ref"; exit 1; }
+
+          [[ "${GITHUB_REF_NAME}" =~ ^mova-app-server-v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta)(\.[0-9]+)?)?$ ]] \
+            || { echo "Tag '${GITHUB_REF_NAME}' doesn't match expected format"; exit 1; }
+
+          version="${GITHUB_REF_NAME#mova-app-server-v}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Mova app-server release tag is valid (${version})"
+          echo "::endgroup::"
+
+      - name: Determine npm publish settings
+        id: npm_publish_settings
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          version="${VERSION}"
+
+          if [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+            echo "npm_tag=" >> "$GITHUB_OUTPUT"
+          elif [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+$ ]]; then
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+            echo "npm_tag=alpha" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            echo "npm_tag=" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-macos-app-server:
+    needs: tag-check
+    name: Build macOS app-server - ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: codex-rs
+    env:
+      CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO: packed
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Print runner specs
+        shell: bash
+        run: |
+          set -euo pipefail
+          total_ram="$(sysctl -n hw.memsize | awk '{printf "%.1f GiB\n", $1 / 1024 / 1024 / 1024}')"
+          echo "Runner: ${RUNNER_NAME:-unknown}"
+          echo "OS: $(sw_vers -productName) $(sw_vers -productVersion)"
+          echo "Hardware model: $(sysctl -n hw.model)"
+          echo "CPU architecture: $(uname -m)"
+          echo "Logical CPUs: $(sysctl -n hw.logicalcpu)"
+          echo "Physical CPUs: $(sysctl -n hw.physicalcpu)"
+          echo "Total RAM: ${total_ram}"
+          df -h .
+
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Configure rusty_v8 artifact overrides and verify checksums
+        uses: ./.github/actions/setup-rusty-v8
+        with:
+          target: ${{ matrix.target }}
+
+      - name: Cargo build app-server
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --target "${{ matrix.target }}" --release --timings --bin codex-app-server
+
+      - name: Stage app-server archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="${{ matrix.target }}"
+          release_dir="target/${target}/release"
+          stage_root="app-server-dist/${target}/package"
+          archive_dir="app-server-dist/${target}"
+
+          rm -rf "$stage_root"
+          mkdir -p "$stage_root/bin" "$archive_dir"
+          cp "$release_dir/codex-app-server" "$stage_root/bin/codex-app-server"
+          strip -x "$stage_root/bin/codex-app-server" || true
+          chmod 0755 "$stage_root/bin/codex-app-server"
+          tar -C "$stage_root" -czf "$archive_dir/codex-app-server-package-${target}.tar.gz" bin/codex-app-server
+          ls -lh "$archive_dir"
+
+      - name: Upload app-server archive
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: ${{ matrix.target }}-app-server
+          path: codex-rs/app-server-dist/${{ matrix.target }}/*
+          if-no-files-found: error
+
+  build-windows-app-server:
+    needs: tag-check
+    name: Build Windows app-server - ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: codex-rs
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Print runner specs
+        shell: powershell
+        run: |
+          $computer = Get-CimInstance Win32_ComputerSystem
+          $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+          $ramGiB = [math]::Round($computer.TotalPhysicalMemory / 1GB, 1)
+          Write-Host "Runner: $env:RUNNER_NAME"
+          Write-Host "OS: $([System.Environment]::OSVersion.VersionString)"
+          Write-Host "CPU: $($cpu.Name)"
+          Write-Host "Logical CPUs: $($computer.NumberOfLogicalProcessors)"
+          Write-Host "Physical CPUs: $($computer.NumberOfProcessors)"
+          Write-Host "Total RAM: $ramGiB GiB"
+          Get-PSDrive -PSProvider FileSystem | Format-Table -AutoSize Name, @{Name='Size(GB)';Expression={[math]::Round(($_.Used + $_.Free) / 1GB, 1)}}, @{Name='Free(GB)';Expression={[math]::Round($_.Free / 1GB, 1)}}
+
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Configure LLVM linker
+        uses: ./.github/actions/setup-msvc-env
+        with:
+          target: ${{ matrix.target }}
+
+      - name: Cargo build app-server
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="${{ matrix.target }}"
+          if [[ "$target" == "x86_64-pc-windows-msvc" ]]; then
+            export LIBSQLITE3_FLAGS=SQLITE_DISABLE_INTRINSIC
+          fi
+          cargo build --target "$target" --release --timings --bin codex-app-server
+
+      - name: Stage app-server archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="${{ matrix.target }}"
+          release_dir="target/${target}/release"
+          stage_root="app-server-dist/${target}/package"
+          archive_dir="app-server-dist/${target}"
+
+          rm -rf "$stage_root"
+          mkdir -p "$stage_root/bin" "$archive_dir"
+          cp "$release_dir/codex-app-server.exe" "$stage_root/bin/codex-app-server.exe"
+          tar -C "$stage_root" -czf "$archive_dir/codex-app-server-package-${target}.tar.gz" bin/codex-app-server.exe
+          ls -lh "$archive_dir"
+
+      - name: Upload app-server archive
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: ${{ matrix.target }}-app-server
+          path: codex-rs/app-server-dist/${{ matrix.target }}/*
+          if-no-files-found: error
+
+  release:
+    needs:
+      - tag-check
+      - build-macos-app-server
+      - build-windows-app-server
+    if: >-
+      ${{
+        always() &&
+        needs.tag-check.result == 'success' &&
+        needs.build-macos-app-server.result == 'success' &&
+        needs.build-windows-app-server.result == 'success'
+      }}
+    name: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    outputs:
+      version: ${{ steps.release_metadata.outputs.version }}
+      tag: ${{ github.ref_name }}
+      should_publish_npm: ${{ steps.release_metadata.outputs.should_publish_npm }}
+      npm_tag: ${{ steps.release_metadata.outputs.npm_tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Generate release notes from tag commit message
+        id: release_notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          notes_path="${RUNNER_TEMP}/release-notes.md"
+          git log -1 --format=%B "${commit}" > "${notes_path}"
+          echo >> "${notes_path}"
+          echo "path=${notes_path}" >> "${GITHUB_OUTPUT}"
+
+      - name: Define release metadata
+        id: release_metadata
+        run: |
+          {
+            echo "version=${{ needs.tag-check.outputs.version }}"
+            echo "should_publish_npm=${{ needs.tag-check.outputs.should_publish_npm }}"
+            echo "npm_tag=${{ needs.tag-check.outputs.npm_tag }}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download app-server artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist
+          pattern: "*-app-server"
+
+      - name: List artifacts
+        run: find dist -maxdepth 3 -type f -print -exec ls -lh {} \;
+
+      - name: Add app-server checksum manifest
+        run: |
+          set -euo pipefail
+          manifest="dist/mova-app-server_SHA256SUMS"
+          find dist -type f -name 'codex-app-server-package-*.tar.gz' -print |
+            sort |
+            while IFS= read -r archive; do
+              sha256sum "$archive" |
+                awk -v name="$(basename "$archive")" '{ print $1 "  " name }'
+            done > "$manifest"
+          test -s "$manifest"
+          cat "$manifest"
+
+      - name: Setup Node.js for npm packaging
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 22
+
+      - name: Stage npm packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.tag-check.outputs.version }}
+        run: |
+          set -euo pipefail
+          workflow_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          stage_args=(
+            --release-version "$RELEASE_VERSION"
+            --workflow-url "$workflow_url"
+            --artifacts-dir "${GITHUB_WORKSPACE}/dist"
+            --package mova-app-server-darwin-arm64
+            --package mova-app-server-win32-x64
+          )
+          for target in ${APP_SERVER_RELEASE_TARGETS}; do
+            stage_args+=(--target "$target")
+          done
+          ./scripts/stage_mova_npm_packages.py "${stage_args[@]}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2.6.1
+        with:
+          name: app-server ${{ needs.tag-check.outputs.version }}
+          tag_name: ${{ github.ref_name }}
+          body_path: ${{ steps.release_notes.outputs.path }}
+          files: dist/**
+          overwrite_files: true
+          make_latest: false
+          prerelease: ${{ contains(needs.tag-check.outputs.version, '-') }}
+
+  publish-npm:
+    if: >-
+      ${{
+        !cancelled() &&
+        needs.release.result == 'success' &&
+        needs.release.outputs.should_publish_npm == 'true'
+      }}
+    name: publish-npm
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+          scope: "@movscript"
+
+      - name: Download npm tarballs from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.release.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/npm
+          for target in ${APP_SERVER_RELEASE_TARGETS}; do
+            case "$target" in
+              x86_64-unknown-linux-musl) platform="linux-x64" ;;
+              aarch64-unknown-linux-musl) platform="linux-arm64" ;;
+              x86_64-apple-darwin) platform="darwin-x64" ;;
+              aarch64-apple-darwin) platform="darwin-arm64" ;;
+              x86_64-pc-windows-msvc) platform="win32-x64" ;;
+              aarch64-pc-windows-msvc) platform="win32-arm64" ;;
+              *)
+                echo "Unexpected app-server release target: $target"
+                exit 1
+                ;;
+            esac
+            gh release download "$RELEASE_TAG" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --pattern "mova-app-server-npm-${platform}-${RELEASE_VERSION}.tgz" \
+              --dir dist/npm
+          done
+
+      - name: Publish to npm
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+          NPM_TAG: ${{ needs.release.outputs.npm_tag }}
+        run: |
+          set -euo pipefail
+          prefix=""
+          if [[ -n "${NPM_TAG}" ]]; then
+            prefix="${NPM_TAG}-"
+          fi
+
+          for target in ${APP_SERVER_RELEASE_TARGETS}; do
+            case "$target" in
+              x86_64-unknown-linux-musl) platform="linux-x64" ;;
+              aarch64-unknown-linux-musl) platform="linux-arm64" ;;
+              x86_64-apple-darwin) platform="darwin-x64" ;;
+              aarch64-apple-darwin) platform="darwin-arm64" ;;
+              x86_64-pc-windows-msvc) platform="win32-x64" ;;
+              aarch64-pc-windows-msvc) platform="win32-arm64" ;;
+              *)
+                echo "Unexpected app-server release target: $target"
+                exit 1
+                ;;
+            esac
+
+            tarball="dist/npm/mova-app-server-npm-${platform}-${VERSION}.tgz"
+            if [[ ! -f "$tarball" ]]; then
+              echo "Missing npm tarball: $tarball"
+              exit 1
+            fi
+
+            tag="${prefix}${platform}"
+            publish_cmd=(npm publish "${GITHUB_WORKSPACE}/${tarball}" --access public)
+            if [[ -n "$tag" ]]; then
+              publish_cmd+=(--tag "$tag")
+            fi
+
+            echo "+ ${publish_cmd[*]}"
+            set +e
+            publish_output="$("${publish_cmd[@]}" 2>&1)"
+            publish_status=$?
+            set -e
+
+            echo "${publish_output}"
+            if [[ ${publish_status} -eq 0 ]]; then
+              continue
+            fi
+
+            if grep -qiE "previously published|cannot publish over|version already exists" <<< "${publish_output}"; then
+              echo "Skipping already-published package version for ${tarball}"
+              continue
+            fi
+
+            exit "${publish_status}"
+          done
